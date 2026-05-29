@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* PGEL QR System — light industrial design system. All colors HSL. */
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Industrial blue */
+    --primary: 217 91% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 91% 60%;
+
+    --secondary: 210 40% 94%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 30% 94%;
+    --muted-foreground: 215 16% 40%;
+
+    --accent: 210 40% 92%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 42 96% 50%;
+    --warning-foreground: 30 50% 15%;
+
+    --border: 215 20% 88%;
+    --input: 215 20% 88%;
+    --ring: 217 91% 45%;
+
+    --radius: 0.625rem;
+
+    --gradient-surface: linear-gradient(180deg, hsl(210 40% 99%), hsl(210 40% 96%));
+    --gradient-primary: linear-gradient(135deg, hsl(217 91% 45%), hsl(217 91% 60%));
+    --shadow-sm: 0 1px 2px hsl(215 25% 27% / 0.06);
+    --shadow-md: 0 4px 12px -2px hsl(215 25% 27% / 0.08);
+    --shadow-lg: 0 10px 30px -8px hsl(217 91% 45% / 0.18);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 217 91% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 94%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 215 20% 88%;
+    --sidebar-ring: 217 91% 45%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}
+
+@layer components {
+  .status-banner {
+    @apply rounded-lg px-5 py-4 font-semibold text-base flex items-center gap-3 shadow-sm border;
+  }
+  .status-success { @apply bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.3)] text-[hsl(var(--success))]; }
+  .status-warning { @apply bg-[hsl(var(--warning)/0.15)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning-foreground))]; }
+  .status-error   { @apply bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]; }
+  .stat-card {
+    @apply rounded-xl bg-card border border-border p-5 shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow-md)];
+  }
+}
+
+@media print {
+  @page { margin: 0; size: 50mm 25mm; }
+  html, body { 
+    height: 100vh; 
+    margin: 0 !important; 
+    padding: 0 !important;
+    overflow: hidden;
+  }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { 
+    position: absolute; 
+    left: 0; 
+    top: 0; 
+    margin: 0;
+    width: 100%;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+  }
+}
