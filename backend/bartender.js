@@ -267,7 +267,8 @@ router.post('/print', async (req, res) => {
       // Use frontend override for label path, then .env
       const labelPath = (printerConfig && printerConfig.labelPath) ? printerConfig.labelPath : (process.env.BARTENDER_LABEL_PATH || 'C:\\Labels\\Template.btw');
       
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scanwise-bt-'));
+      const tempDir = path.join(os.tmpdir(), 'scanwise-bt-data');
+      fs.mkdirSync(tempDir, { recursive: true });
       const dataPath = path.join(tempDir, `label-${Date.now()}.csv`);
       const csv = [
         'QRCode,SAPCode,Description',
@@ -277,7 +278,7 @@ router.post('/print', async (req, res) => {
 
       let cmdTemplate = process.env.PRINT_CMD_TEMPLATE;
       if (!cmdTemplate) {
-         cmdTemplate = `${exePath} /AF=${cmdQuoted(labelPath)} /PRN=${cmdQuoted(printerName)} /D=${cmdQuoted(dataPath)} /P /DD /X`;
+         cmdTemplate = `${exePath} /AF=${cmdQuoted(labelPath)} /PRN=${cmdQuoted(printerName)} /D=${cmdQuoted(dataPath)} /FP /P /X`;
       }
 
       const finalCmd = cmdTemplate
@@ -291,13 +292,6 @@ router.post('/print', async (req, res) => {
       console.log('Executing CMD Print Fallback:', finalCmd);
 
       exec(finalCmd, (error, stdout, stderr) => {
-        try {
-          if (fs.existsSync(dataPath)) fs.unlinkSync(dataPath);
-          if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
-        } catch (cleanupErr) {
-          console.warn('Unable to clean temporary BarTender data file:', cleanupErr && cleanupErr.message ? cleanupErr.message : cleanupErr);
-        }
-
         if (error) {
           console.error(`CMD Print Error: ${error.message}`);
           if (req.io) req.io.emit('printer_event', { type: 'error', message: `API & CMD Failed: ${error.message}` });
@@ -305,8 +299,9 @@ router.post('/print', async (req, res) => {
         }
         
         console.log('CMD Print Success:', stdout);
-        if (req.io) req.io.emit('printer_event', { type: 'success', details: { method: 'cmd', output: stdout } });
-        res.json({ success: true, message: 'Printed successfully via CMD Fallback', details: { stdout } });
+        if (stderr) console.warn('CMD Print stderr:', stderr);
+        if (req.io) req.io.emit('printer_event', { type: 'success', details: { method: 'cmd', output: stdout, dataPath } });
+        res.json({ success: true, message: 'Printed successfully via CMD Fallback', details: { stdout, stderr, dataPath } });
       });
       return; // Important: Return here to avoid sending multiple responses
     }
