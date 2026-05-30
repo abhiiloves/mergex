@@ -25,6 +25,14 @@ async function readResponseBody(response) {
   }
 }
 
+function csvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function cmdQuoted(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
 router.use((req, res, next) => {
   if (!pollInterval && req.io) {
     pollInterval = setInterval(async () => {
@@ -226,6 +234,8 @@ router.post('/print', async (req, res) => {
     if (!apiSuccess && (method === 'cmd' || method === 'auto')) {
       const { exec } = require('child_process');
       const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
 
       // Attempt to auto-detect BarTender executable path
       const getExePath = () => {
@@ -257,25 +267,37 @@ router.post('/print', async (req, res) => {
       // Use frontend override for label path, then .env
       const labelPath = (printerConfig && printerConfig.labelPath) ? printerConfig.labelPath : (process.env.BARTENDER_LABEL_PATH || 'C:\\Labels\\Template.btw');
       
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scanwise-bt-'));
+      const dataPath = path.join(tempDir, `label-${Date.now()}.csv`);
+      const csv = [
+        'QRCode,SAPCode,Description',
+        [csvCell(qrCode), csvCell(sapCode), csvCell(description)].join(',')
+      ].join('\r\n');
+      fs.writeFileSync(dataPath, csv, 'utf8');
+
       let cmdTemplate = process.env.PRINT_CMD_TEMPLATE;
       if (!cmdTemplate) {
-         cmdTemplate = `${exePath} /F="${labelPath}" /PRN="${printerName}" /R="QRCode={{QRCODE}}" /R="SAPCode={{SAPCODE}}" /R="Description={{DESCRIPTION}}" /P /X`;
+         cmdTemplate = `${exePath} /AF=${cmdQuoted(labelPath)} /PRN=${cmdQuoted(printerName)} /D=${cmdQuoted(dataPath)} /P /DD /X`;
       }
 
-      // Sanitize inputs to prevent command injection
-      const cleanQr = String(qrCode).replace(/"/g, '""');
-      const cleanSap = String(sapCode).replace(/"/g, '""');
-      const cleanDesc = String(description).replace(/"/g, '""');
-
       const finalCmd = cmdTemplate
-        .replace(/\{\{QRCODE\}\}/g, cleanQr)
-        .replace(/\{\{SAPCODE\}\}/g, cleanSap)
-        .replace(/\{\{DESCRIPTION\}\}/g, cleanDesc)
-        .replace(/\{\{PRINTER_NAME\}\}/g, printerName);
+        .replace(/\{\{QRCODE\}\}/g, String(qrCode).replace(/"/g, '""'))
+        .replace(/\{\{SAPCODE\}\}/g, String(sapCode).replace(/"/g, '""'))
+        .replace(/\{\{DESCRIPTION\}\}/g, String(description).replace(/"/g, '""'))
+        .replace(/\{\{PRINTER_NAME\}\}/g, printerName)
+        .replace(/\{\{LABEL_PATH\}\}/g, labelPath)
+        .replace(/\{\{DATA_FILE\}\}/g, dataPath);
 
       console.log('Executing CMD Print Fallback:', finalCmd);
 
       exec(finalCmd, (error, stdout, stderr) => {
+        try {
+          if (fs.existsSync(dataPath)) fs.unlinkSync(dataPath);
+          if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (cleanupErr) {
+          console.warn('Unable to clean temporary BarTender data file:', cleanupErr && cleanupErr.message ? cleanupErr.message : cleanupErr);
+        }
+
         if (error) {
           console.error(`CMD Print Error: ${error.message}`);
           if (req.io) req.io.emit('printer_event', { type: 'error', message: `API & CMD Failed: ${error.message}` });
