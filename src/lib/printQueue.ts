@@ -45,24 +45,57 @@ export function clearCompleted() {
   emit();
 }
 
+function buildBarTenderPayload(job: PrintJob, printerName: string) {
+  return {
+    Printer: printerName,
+    NamedDataSources: {
+      QRCode: job.serial_number,
+      SAPCode: job.part_code,
+      Description: job.model,
+    },
+    Variables: {
+      QRCode: job.serial_number,
+      SAPCode: job.part_code,
+      Description: job.model,
+    },
+  };
+}
+
+function isLocalProxyUrl(url: string) {
+  return /\/api\/bartender\/?$/i.test(url.trim());
+}
+
+async function readPrinterError(res: Response) {
+  const text = await res.text();
+  if (!text) return res.statusText;
+  try {
+    const json = JSON.parse(text);
+    return json.error || json.message || json.details || text;
+  } catch {
+    return text;
+  }
+}
+
 // Actual BarTender call via Client-Side REST or Local Node Proxy
 async function sendToBarTender(job: PrintJob): Promise<void> {
   const cfg = getPrinterConfig();
-  
-  // Format the payload exactly as the local Node.js proxy expects it
-  const payload = {
-    qrCode: job.serial_number,
-    sapCode: job.part_code,
-    description: job.model,
-    printerName: cfg.name, // Send printer name just in case
-    printerConfig: cfg // Pass the full config overrides (method, labelPath, exePath)
-  };
+  const url = cfg.url.replace(/\/+$/, "");
+  const useProxy = isLocalProxyUrl(url) || cfg.method !== "api";
+  const payload = useProxy
+    ? {
+        qrCode: job.serial_number,
+        sapCode: job.part_code,
+        description: job.model,
+        printerName: cfg.name,
+        printerConfig: cfg,
+      }
+    : buildBarTenderPayload(job, cfg.name);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000); // Increased timeout for CMD execution
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   try {
-    const res = await fetch(`${cfg.url}/print`, {
+    const res = await fetch(`${url}/print`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -71,7 +104,7 @@ async function sendToBarTender(job: PrintJob): Promise<void> {
     
     clearTimeout(timeoutId);
     if (!res.ok) {
-      const errText = await res.text();
+      const errText = await readPrinterError(res);
       throw new Error(`Printer Error: ${errText || res.statusText}`);
     }
   } catch (err: any) {

@@ -1,8 +1,29 @@
 const express = require('express');
 const router = express.Router();
 
+// Ensure `fetch` is available on older Node versions
+if (typeof fetch === 'undefined') {
+  try {
+    // node-fetch v2/v3 compat
+    // eslint-disable-next-line global-require
+    global.fetch = require('node-fetch');
+  } catch (e) {
+    console.warn('Global fetch is not available and node-fetch could not be loaded; remote BarTender API calls may fail.');
+  }
+}
+
 let lastStatusStr = '';
 let pollInterval = null;
+
+async function readResponseBody(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return { raw: text };
+  }
+}
 
 router.use((req, res, next) => {
   if (!pollInterval && req.io) {
@@ -10,10 +31,35 @@ router.use((req, res, next) => {
       try {
         const apiUrl = process.env.BARTENDER_API_URL || 'http://localhost:5159/api';
         const printerName = process.env.BARTENDER_PRINTER_NAME || 'Zebra_ZT411';
-        const response = await fetch(`${apiUrl}/status?printer=${printerName}`);
+        const response = await fetch(`${apiUrl}/status?printer=${encodeURIComponent(printerName)}`);
         if (response.ok) {
-          const data = await response.json();
-          data.name = printerName;
+          try {
+            const data = await response.json();
+            data.name = printerName;
+            const currentStatusStr = JSON.stringify(data);
+            if (currentStatusStr !== lastStatusStr) {
+              lastStatusStr = currentStatusStr;
+              req.io.emit('printer_status', data);
+            }
+          } catch (jsonErr) {
+            // If response isn't JSON, just emit a minimal status
+            const data = { name: printerName, status: 'Unknown', lastError: 'Invalid status response' };
+            const currentStatusStr = JSON.stringify(data);
+            if (currentStatusStr !== lastStatusStr) {
+              lastStatusStr = currentStatusStr;
+              req.io.emit('printer_status', data);
+            }
+          }
+        } else {
+          const data = {
+            name: process.env.BARTENDER_PRINTER_NAME || 'Zebra_ZT411',
+            status: 'Not Connected',
+            totalPrinted: 0,
+            successPrinted: 0,
+            failedPrinted: 0,
+            lastPrintStatus: 'Failed',
+            lastError: `BarTender status check returned ${response.status}`
+          };
           const currentStatusStr = JSON.stringify(data);
           if (currentStatusStr !== lastStatusStr) {
             lastStatusStr = currentStatusStr;
@@ -28,7 +74,7 @@ router.use((req, res, next) => {
           successPrinted: 0,
           failedPrinted: 0,
           lastPrintStatus: 'Failed',
-          lastError: 'Printer is offline'
+          lastError: err && err.message ? err.message : 'Printer is offline'
         };
         const currentStatusStr = JSON.stringify(data);
         if (currentStatusStr !== lastStatusStr) {
@@ -47,7 +93,7 @@ router.get('/status', async (req, res) => {
     const printerName = process.env.BARTENDER_PRINTER_NAME || 'Zebra_ZT411';
     
     // Attempt to fetch live status from BarTender API
-    const response = await fetch(`${apiUrl}/status?printer=${printerName}`);
+    const response = await fetch(`${apiUrl}/status?printer=${encodeURIComponent(printerName)}`);
     
     if (!response.ok) throw new Error('BarTender API returned non-OK status');
     
@@ -68,40 +114,54 @@ router.get('/status', async (req, res) => {
 });
 
 router.post('/print', async (req, res) => {
-  const { qrCode, sapCode, description, printerConfig } = req.body;
+  const directNamedSources = req.body && (req.body.NamedDataSources || req.body.Variables);
+  const qrCode = req.body.qrCode || (directNamedSources && (directNamedSources.QRCode || directNamedSources.qrCode));
+  const sapCode = req.body.sapCode || (directNamedSources && (directNamedSources.SAPCode || directNamedSources.sapCode));
+  const description = req.body.description || (directNamedSources && (directNamedSources.Description || directNamedSources.description));
+  const printerConfig = req.body.printerConfig;
+  const bodyPrinterName = req.body.printerName || req.body.Printer;
   
   if (!qrCode) {
     return res.status(400).json({ success: false, error: 'QR Code is required' });
   }
 
-  // Use frontend overrides if provided, else fallback to .env
-  const printerName = (printerConfig && printerConfig.name) ? printerConfig.name : (process.env.BARTENDER_PRINTER_NAME || 'Zebra_ZT411');
-  const method = (printerConfig && printerConfig.method) ? printerConfig.method : (process.env.PRINT_METHOD || 'auto');
+  // Use explicit request override, then frontend overrides, else fallback to .env
+  const printerName = bodyPrinterName || (printerConfig && printerConfig.name) || (process.env.BARTENDER_PRINTER_NAME || 'Zebra_ZT411');
+  // Default to CMD to avoid relying on BarTender REST API; can be overridden with env PRINT_METHOD or printerConfig.method
+  const method = ((printerConfig && printerConfig.method) ? printerConfig.method : (process.env.PRINT_METHOD || 'cmd')).toLowerCase();
 
   try {
     const apiUrl = process.env.BARTENDER_API_URL || 'http://localhost:5159/api';
-    
+
     // Strict Connectivity Check: Ensure printer is actually online before accepting the print job
     let isOffline = false;
     let offlineReason = '';
 
     try {
-      const statusRes = await fetch(`${apiUrl}/status?printer=${printerName}`);
+      const statusRes = await fetch(`${apiUrl}/status?printer=${encodeURIComponent(printerName)}`);
       if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        // Check for explicitly offline statuses
-        const s = (statusData.status || '').toLowerCase();
-        if (s.includes('offline') || s.includes('error') || s.includes('not connected') || s === 'paused') {
-          isOffline = true;
-          offlineReason = statusData.status;
+        try {
+          const statusData = await statusRes.json();
+          const s = (statusData.status || '').toLowerCase();
+          if (s.includes('offline') || s.includes('error') || s.includes('not connected') || s === 'paused') {
+            isOffline = true;
+            offlineReason = statusData.status;
+          }
+        } catch (jsonErr) {
+          // If we can't parse JSON, don't assume offline; we'll attempt a print and report errors.
+          console.warn('Unable to parse BarTender status JSON:', jsonErr.message);
         }
+      } else {
+        // Non-OK status from BarTender status endpoint; note it but allow fallback attempts
+        offlineReason = `Status endpoint returned ${statusRes.status}`;
+        console.warn('BarTender status check returned non-OK:', statusRes.status);
       }
     } catch (e) {
       // API is unreachable. If we are falling back to CMD, we can try to check Windows spooler status
+      console.warn('BarTender status check failed:', e && e.message ? e.message : e);
       try {
         const util = require('util');
         const execAsync = util.promisify(require('child_process').exec);
-        // Quick PowerShell check for printer status. "Offline" or "Error" usually means it's not connected.
         const { stdout } = await execAsync(`powershell -Command "(Get-PrintQueue -Name '${printerName}' -ErrorAction SilentlyContinue).Status"`);
         const psStatus = stdout.trim().toLowerCase();
         if (psStatus.includes('offline') || psStatus.includes('error')) {
@@ -109,7 +169,8 @@ router.post('/print', async (req, res) => {
           offlineReason = psStatus;
         }
       } catch (psErr) {
-        // Ignore if we can't run powershell, we will just have to blindly attempt the print.
+        // Ignore if we can't run powershell, we will just have to attempt the print and surface errors
+        console.warn('PowerShell check failed:', psErr && psErr.message ? psErr.message : psErr);
       }
     }
 
@@ -124,34 +185,40 @@ router.post('/print', async (req, res) => {
     // 1. Try API if configured
     if (method === 'api' || method === 'auto') {
       try {
+        const payload = {
+          Printer: printerName,
+          NamedDataSources: {
+            QRCode: qrCode,
+            SAPCode: sapCode,
+            Description: description
+          },
+          Variables: {
+            QRCode: qrCode,
+            SAPCode: sapCode,
+            Description: description
+          }
+        };
+
+        console.log('Sending print request to BarTender API', apiUrl + '/print', payload);
         const response = await fetch(`${apiUrl}/print`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            Printer: printerName,
-            NamedDataSources: {
-              QRCode: qrCode,
-              SAPCode: sapCode,
-              Description: description
-            },
-            Variables: {
-              QRCode: qrCode,
-              SAPCode: sapCode,
-              Description: description
-            }
-          })
+          body: JSON.stringify(payload)
         });
 
         if (response.ok) {
           apiSuccess = true;
-          const data = await response.json();
+          const data = await readResponseBody(response);
           if (req.io) req.io.emit('printer_event', { type: 'success', details: data });
           return res.json({ success: true, message: 'Printed successfully via API', details: data });
         } else {
-          apiErrorMsg = await response.text();
+          const data = await readResponseBody(response);
+          apiErrorMsg = `Status ${response.status}: ${data.error || data.message || data.raw || response.statusText}`;
+          console.warn('BarTender API print failed:', apiErrorMsg);
         }
       } catch (err) {
-        apiErrorMsg = err.message;
+        apiErrorMsg = err && err.message ? err.message : String(err);
+        console.warn('BarTender API print threw error:', apiErrorMsg);
       }
     }
 

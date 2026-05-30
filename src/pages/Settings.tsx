@@ -128,7 +128,7 @@ function PrinterTab() {
                 id="printer-label" 
                 value={pLabel} 
                 onChange={(e) => setPLabel(e.target.value)}
-                placeholder="C:\Labels\Template.btw" 
+                placeholder="C:\\Labels\\Template.btw" 
               />
               <p className="text-[10px] text-muted-foreground">Absolute path to the BarTender document on the PC running the proxy.</p>
             </div>
@@ -138,7 +138,7 @@ function PrinterTab() {
                 id="printer-exe" 
                 value={pExe} 
                 onChange={(e) => setPExe(e.target.value)}
-                placeholder="C:\Program Files\Seagull\BarTender 2022\bartend.exe" 
+                placeholder="C:\\Program Files\\Seagull\\BarTender 2022\\bartend.exe" 
               />
               <p className="text-[10px] text-muted-foreground">Leave blank to let the system auto-detect standard BarTender installations.</p>
             </div>
