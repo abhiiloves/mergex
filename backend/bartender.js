@@ -267,9 +267,11 @@ router.post('/print', async (req, res) => {
       // Use frontend override for label path, then .env
       const labelPath = (printerConfig && printerConfig.labelPath) ? printerConfig.labelPath : (process.env.BARTENDER_LABEL_PATH || 'C:\\Labels\\Template.btw');
       
-      const tempDir = path.join(os.tmpdir(), 'scanwise-bt-data');
-      fs.mkdirSync(tempDir, { recursive: true });
-      const dataPath = path.join(tempDir, `label-${Date.now()}.csv`);
+      const labelDir = path.dirname(labelPath);
+      const fallbackDir = path.join(os.tmpdir(), 'scanwise-bt-data');
+      const dataDir = fs.existsSync(labelDir) ? labelDir : fallbackDir;
+      fs.mkdirSync(dataDir, { recursive: true });
+      const dataPath = path.join(dataDir, 'scanwise-print.csv');
       const csv = [
         'QRCode,SAPCode,Description',
         [csvCell(qrCode), csvCell(sapCode), csvCell(description)].join(',')
