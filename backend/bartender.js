@@ -278,7 +278,7 @@ router.post('/print', async (req, res) => {
 
       let cmdTemplate = process.env.PRINT_CMD_TEMPLATE;
       if (!cmdTemplate) {
-         cmdTemplate = `${exePath} /AF=${cmdQuoted(labelPath)} /PRN=${cmdQuoted(printerName)} /D=${cmdQuoted(dataPath)} /FP /P /X`;
+         cmdTemplate = `${exePath} /F=${cmdQuoted(labelPath)} /PRN=${cmdQuoted(printerName)} /D=${cmdQuoted(dataPath)} /P /X`;
       }
 
       const finalCmd = cmdTemplate
